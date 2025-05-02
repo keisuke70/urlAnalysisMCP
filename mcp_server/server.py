@@ -76,6 +76,14 @@ async def _analyze_company_async(url: str) -> dict:
         logger.error(traceback.format_exc())
         return default_response
 
+def analyze_company_sync(url: str) -> dict:
+    """
+    Synchronous version for direct calls outside of FastMCP.
+    Input: company homepage URL.
+    Output: JSON {manufacturer, email, contact, contact_url, mail_body}.
+    """
+    return asyncio.run(_analyze_company_async(url))
+
 @mcp.tool(
     annotations={
         "title": "Analyze Company Website",
@@ -83,18 +91,14 @@ async def _analyze_company_async(url: str) -> dict:
         "openWorldHint": True
     }
 )
-def analyze_company(url: str) -> dict:
+async def analyze_company(url: str) -> dict:
     """
     Input: company homepage URL.
     Output: JSON {manufacturer, email, contact, contact_url, mail_body}.
     
-    This is a synchronous wrapper around the async implementation.
+    This is the async version that FastMCP will use.
     """
-    loop = asyncio.new_event_loop()
-    try:
-        return loop.run_until_complete(_analyze_company_async(url))
-    finally:
-        loop.close()
+    return await _analyze_company_async(url)
 
 if __name__ == "__main__":
     mcp.run()  # defaults to stdio transport
