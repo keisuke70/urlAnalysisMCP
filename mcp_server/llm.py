@@ -208,10 +208,9 @@ def draft_email(company_name: str, is_manufacturer: bool, company_summary: str =
             return ""
         
         email_body = response.strip()
-        
-        email_body = email_body.replace("\n\n", "\n")
-        
+
         return email_body
+
         
     except RuntimeError:
         raise
