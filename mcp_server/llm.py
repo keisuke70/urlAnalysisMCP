@@ -158,7 +158,12 @@ def draft_email(company_name: str, is_manufacturer: bool) -> str:
             logger.warning("Failed to generate email from LLM. Returning empty string.")
             return ""
         
-        return response.strip()
+        response = response.strip()
+        
+        if is_manufacturer:
+            response = response.replace("\n\n", "\n")
+        
+        return response
         
     except RuntimeError:
         raise
