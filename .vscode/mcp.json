@@ -1,0 +1,19 @@
+// .vscode/mcp.json  (workspace‑level)
+{
+  "servers": {
+    "urlAnalysis": {
+      "type": "stdio",
+
+      "command": "python",
+      "args": ["-m", "mcp_server.server"], // run *as a module*
+
+      // Put the project root on PYTHONPATH so -m can find it
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}"
+      },
+
+      // (optional) load your secrets automatically
+      "envFile": "${workspaceFolder}/.env"
+    }
+  }
+}
