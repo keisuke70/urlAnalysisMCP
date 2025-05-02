@@ -44,7 +44,6 @@ def analyze_company(url: str) -> dict:
         company_name = extract_name(html_content, text_content, url)
         
         company_summary = summarize_company(text_content)
-        logger.info(f"Generated company summary: {company_summary[:50]}...")
         
         is_manufacturer = classify_manufacturer(text_content)
         

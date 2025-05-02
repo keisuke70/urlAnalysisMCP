@@ -11,6 +11,23 @@ logger = logging.getLogger(__name__)
 MAX_RETRIES = 3
 BASE_DELAY = 2
 
+# ────────────────────────────────────────────────────────────────────────────
+# 追加: メール末尾に必ず付けるクロージングブロック
+# ────────────────────────────────────────────────────────────────────────────
+CLOSING_BLOCK = """今回のご連絡は「ご提案」ではなく、現場のリアルなお声をお聞かせいただくためのヒアリングのお願いです。
+Zoomなどのオンラインで、10〜15分程度のお時間を頂戴できましたら幸いです。
+また、ご希望に応じて、超低コスト（場合により無償）での試作ツールのご提供も可能です。
+少しでもご興味をお持ちいただけましたら、以下のカレンダーよりご都合の良い時間をご予約いただくか、候補日時をいくつかご返信いただけますと幸いです。
+▼カレンダー予約リンク
+https://calendar.app.google/jM8gesybkVQEGhww6
+
+株式会社 日本自動化技術
+橋本 武士（はしもと たけし）
+https://japan-automation-technology.vercel.app"""
+
+# ────────────────────────────────────────────────────────────────────────────
+# Gemini 基本処理
+# ────────────────────────────────────────────────────────────────────────────
 def _initialize_gemini():
     """
     Initialize the Gemini API with the API key from environment variables.
@@ -24,15 +41,13 @@ def _initialize_gemini():
     
     genai.configure(api_key=api_key)
 
-def _call_gemini_with_retry(prompt: str, model: str = "gemini-1.5-flash-latest", max_tokens: int = None, temperature: float = None) -> Optional[str]:
+def _call_gemini_with_retry(prompt: str, model:  str = "gemini-2.5-flash-preview-04-17") -> Optional[str]:
     """
     Call Gemini API with retry logic for rate limiting.
     
     Args:
         prompt: The prompt to send to the model
         model: The model name to use
-        max_tokens: Maximum number of tokens to generate
-        temperature: Temperature for generation (0.0 to 1.0)
         
     Returns:
         str: The model's response or None if all retries failed
@@ -42,17 +57,7 @@ def _call_gemini_with_retry(prompt: str, model: str = "gemini-1.5-flash-latest",
     for attempt in range(MAX_RETRIES):
         try:
             model_instance = genai.GenerativeModel(model)
-            
-            generation_config = {}
-            if max_tokens is not None:
-                generation_config["max_output_tokens"] = max_tokens
-            if temperature is not None:
-                generation_config["temperature"] = temperature
-                
-            if generation_config:
-                response = model_instance.generate_content(prompt, generation_config=generation_config)
-            else:
-                response = model_instance.generate_content(prompt)
+            response = model_instance.generate_content(prompt)
                 
             return response.text
         except Exception as e:
@@ -73,6 +78,9 @@ def _call_gemini_with_retry(prompt: str, model: str = "gemini-1.5-flash-latest",
     
     return None
 
+# ────────────────────────────────────────────────────────────────────────────
+# 会社要約・分類
+# ────────────────────────────────────────────────────────────────────────────
 def summarize_company(text: str, max_tokens: int = 250) -> str:
     """
     Summarize company information in Japanese.
@@ -91,8 +99,9 @@ def summarize_company(text: str, max_tokens: int = 250) -> str:
 ---
 {text[:15000]}"""
     
+    
     try:
-        response = _call_gemini_with_retry(prompt, max_tokens=max_tokens)
+        response = _call_gemini_with_retry(prompt)
         
         if not response:
             logger.warning("Failed to get company summary from LLM. Returning empty string.")
@@ -153,6 +162,9 @@ def classify_manufacturer(text: str) -> bool:
         logger.error(traceback.format_exc())
         return False
 
+# ────────────────────────────────────────────────────────────────────────────
+# メール生成
+# ────────────────────────────────────────────────────────────────────────────
 def draft_email(company_name: str, is_manufacturer: bool, company_summary: str = "") -> str:
     """
     Generate a tailored Japanese email based on company type and summary.
@@ -178,8 +190,7 @@ def draft_email(company_name: str, is_manufacturer: bool, company_summary: str =
 私たちは従来の1/3以下のコストで、現場に本当にフィットする高精度なツールを、短期間でご提供できる可能性があります。
 この背景には、私たちが持つ生成AIの技術力と柔軟な開発体制があります。"""
     
-    is_mfg = "はい" if is_manufacturer else "いいえ"
-    
+    # —―― LLM にはクロージングブロックを出力しないよう明示指示 ―――
     email_prompt = f"""
 あなたは丁寧なビジネスメール生成AIです。
 
@@ -187,20 +198,18 @@ def draft_email(company_name: str, is_manufacturer: bool, company_summary: str =
 
 会社名: {company_name}
 会社概要: {company_summary}
-製造業フラグ: {is_mfg}
 
 ・上記情報に基づいて 400〜500 字の日本語メール本文を作成する
 ・件名は「現場DXに関するヒアリングのお願い」で固定
 ・敬語・改行・箇条書きを適宜使用
-・最後にカレンダー予約リンクを記載
 ・メール本文のみを出力し、件名や署名は含めない
+・以下のクロージングブロックは **出力しない**（後で自動付与される）
+{CLOSING_BLOCK}
 """
     
     try:
         response = _call_gemini_with_retry(
-            email_prompt, 
-            temperature=0.4, 
-            max_tokens=600
+            email_prompt
         )
         
         if not response:
@@ -209,9 +218,18 @@ def draft_email(company_name: str, is_manufacturer: bool, company_summary: str =
         
         email_body = response.strip()
 
-        return email_body
-
+        # モデルが誤ってクロージングブロックを含めた場合除去
+        if "今回のご連絡は" in email_body:
+            email_body = email_body.split("今回のご連絡は", 1)[0].rstrip()
         
+        # 句点で終わらせる（なければ追加）
+        if not email_body.endswith("。"):
+            email_body = email_body.rstrip("。") + "。"
+        
+        # クロージングブロックを結合
+        full_email = f"{email_body}\n\n{CLOSING_BLOCK}"
+        return full_email
+
     except RuntimeError:
         raise
     except Exception as e:
