@@ -1,3 +1,8 @@
+import os
+from dotenv import load_dotenv  # Add this import
+
+load_dotenv()  # Add this line to load variables from .env
+
 from mcp.server.fastmcp import FastMCP
 import logging
 import traceback
