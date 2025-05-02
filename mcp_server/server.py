@@ -66,4 +66,4 @@ def analyze_company(url: str) -> dict:
         return default_response
 
 if __name__ == "__main__":
-    mcp.run()  # defaults to 0.0.0.0:8000
+    mcp.run(transport="sse")  # defaults to 0.0.0.0:8000
