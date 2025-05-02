@@ -87,7 +87,7 @@ def find_email(html_content: str) -> str:
         logger.error(f"Error finding email: {str(e)}")
         return None
 
-def has_contact(html_content: str, base_url: str) -> bool:
+def has_contact(html_content: str, base_url: str) -> str:
     """
     Detect if the site has a contact page or form.
     
@@ -96,7 +96,7 @@ def has_contact(html_content: str, base_url: str) -> bool:
         base_url: Base URL for resolving relative links
         
     Returns:
-        bool: True if contact page/form is found, False otherwise
+        str: URL to the contact page/form if found, None otherwise
     """
     try:
         soup = BeautifulSoup(html_content, 'html.parser')
@@ -116,7 +116,9 @@ def has_contact(html_content: str, base_url: str) -> bool:
                     indicator in form_action or 
                     indicator in form_id or 
                     indicator in form_class):
-                    return True
+                    if form.get('action'):
+                        return urljoin(base_url, form.get('action'))
+                    return base_url
         
         links = soup.find_all('a')
         for link in links:
@@ -127,18 +129,25 @@ def has_contact(html_content: str, base_url: str) -> bool:
             
             for indicator in contact_indicators:
                 if indicator in link_text or indicator in href.lower():
-                    return True
+                    if href:
+                        return urljoin(base_url, href)
         
         contact_elements = soup.find_all(['div', 'section', 'footer'], 
-                                        class_=lambda c: c and ('contact' in c.lower() if c else False))
+                                       class_=lambda c: c and ('contact' in c.lower() if c else False))
         if contact_elements:
-            return True
+            for element in contact_elements:
+                links = element.find_all('a')
+                if links:
+                    href = links[0].get('href', '')
+                    if href:
+                        return urljoin(base_url, href)
+            return base_url
             
-        return False
+        return None
         
     except Exception as e:
         logger.error(f"Error checking for contact: {str(e)}")
-        return False
+        return None
 
 def extract_name(html_content: str, text_content: str, url: str) -> str:
     """

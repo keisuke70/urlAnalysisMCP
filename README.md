@@ -50,6 +50,7 @@ The server returns JSON in the following format:
   "manufacturer": true|false,
   "email": "example@domain.com"|null,
   "contact": true|false,
+  "contact_url": "https://example.com/contact"|null,
   "mail_body": "Generated email content..."
 }
 ```

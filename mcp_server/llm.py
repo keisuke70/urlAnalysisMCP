@@ -180,12 +180,11 @@ def draft_email(company_name: str, is_manufacturer: bool, company_summary: str =
     Raises:
         RuntimeError: If GEMINI_API_KEY is not set
     """
-    my_company_pitch = """私たちは、生成AIやアジャイル開発手法を活用し、現場業務を支援するオーダーメイドツールの開発に取り組んでいる、学生発のAIスタートアップ「株式会社 日本自動化技術」です。
+    my_company_pitch = """私たちは、生成AIや最先端の開発手法を活用し、現場業務を支援するオーダーメイドツールの開発に取り組んでいる、学生発のAIスタートアップ「株式会社 日本自動化技術」です。
 現在、製造業の現場における課題やお困りごとについて、幅広くヒアリングを実施しております。
 たとえば、以下のようなお悩みはありませんか？
 日報や在庫管理が紙やExcel中心で煩雑になっている
 熟練者に依存した作業が多く、技術継承や属人化の解消が難しい
-新しい設備の導入や改修が"ぶっつけ本番"になりがちで、事前検証が困難
 これまで「DXには多額の投資が必要」と導入を見送られてきた企業様にも、
 私たちは従来の1/3以下のコストで、現場に本当にフィットする高精度なツールを、短期間でご提供できる可能性があります。
 この背景には、私たちが持つ生成AIの技術力と柔軟な開発体制があります。"""
@@ -200,8 +199,9 @@ def draft_email(company_name: str, is_manufacturer: bool, company_summary: str =
 会社概要: {company_summary}
 
 ・上記情報に基づいて 400〜500 字の日本語メール本文を作成する
-・件名は「現場DXに関するヒアリングのお願い」で固定
 ・敬語・改行・箇条書きを適宜使用
+・突然のご連絡失礼いたしますで始める
+★・初回連絡として自然な表現を用い、面識前提や過度なお世辞の表現は使用しない
 ・メール本文のみを出力し、件名や署名は含めない
 ・以下のクロージングブロックは **出力しない**（後で自動付与される）
 {CLOSING_BLOCK}
@@ -221,6 +221,11 @@ def draft_email(company_name: str, is_manufacturer: bool, company_summary: str =
         # モデルが誤ってクロージングブロックを含めた場合除去
         if "今回のご連絡は" in email_body:
             email_body = email_body.split("今回のご連絡は", 1)[0].rstrip()
+        
+        # 念のため禁止ワードが混入したら除去
+        for phrase in ("お世話になっております", "大変感銘を受けております"):
+            if phrase in email_body:
+                email_body = email_body.replace(phrase, "")
         
         # 句点で終わらせる（なければ追加）
         if not email_body.endswith("。"):

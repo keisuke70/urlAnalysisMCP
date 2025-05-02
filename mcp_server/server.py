@@ -25,12 +25,13 @@ mcp = FastMCP("company_checker")
 def analyze_company(url: str) -> dict:
     """
     Input: company homepage URL.
-    Output: JSON {manufacturer, email, contact, mail_body}.
+    Output: JSON {manufacturer, email, contact, contact_url, mail_body}.
     """
     default_response = {
         "manufacturer": False,
         "email": None,
         "contact": False,
+        "contact_url": None,
         "mail_body": ""
     }
     
@@ -52,12 +53,14 @@ def analyze_company(url: str) -> dict:
                 "manufacturer": False,
                 "email": None,
                 "contact": False,
+                "contact_url": None,
                 "mail_body": None
             }
         
         email = find_email(html_content)
         
-        has_contact_page = has_contact(html_content, url)
+        contact_url = has_contact(html_content, url)
+        has_contact_page = contact_url is not None
         
         email_body = draft_email(company_name, is_manufacturer, company_summary)
         
@@ -65,6 +68,7 @@ def analyze_company(url: str) -> dict:
             "manufacturer": is_manufacturer,
             "email": email,
             "contact": has_contact_page,
+            "contact_url": contact_url,
             "mail_body": email_body
         }
         
