@@ -23,7 +23,7 @@ mcp = FastMCP("company_checker")
         "openWorldHint": True
     }
 )
-def analyze_company(url: str) -> dict:
+async def analyze_company(url: str) -> dict:
     """
     Input: company homepage URL.
     Output: JSON {manufacturer, email, contact, contact_url, mail_body}.
@@ -58,18 +58,13 @@ def analyze_company(url: str) -> dict:
                 "mail_body": None
             }
         
-        async def run_concurrent_tasks():
-            email_task = asyncio.to_thread(find_email, html_content)
-            contact_task = asyncio.to_thread(has_contact, html_content, url)
-            email_body_task = asyncio.to_thread(draft_email, company_name, is_manufacturer, company_summary)
-            
-            email, contact_url, email_body = await asyncio.gather(
-                email_task, contact_task, email_body_task
-            )
-            
-            return email, contact_url, email_body
+        email_task = asyncio.to_thread(find_email, html_content)
+        contact_task = asyncio.to_thread(has_contact, html_content, url)
+        email_body_task = asyncio.to_thread(draft_email, company_name, is_manufacturer, company_summary)
         
-        email, contact_url, email_body = asyncio.run(run_concurrent_tasks())
+        email, contact_url, email_body = await asyncio.gather(
+            email_task, contact_task, email_body_task
+        )
         
         has_contact_page = contact_url is not None
         
