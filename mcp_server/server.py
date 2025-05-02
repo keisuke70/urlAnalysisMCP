@@ -50,7 +50,7 @@ def analyze_company(url: str) -> dict:
                 "manufacturer": False,
                 "email": None,
                 "contact": False,
-                "mail_body": draft_email(company_name, False)
+                "mail_body": None
             }
         
         email = find_email(html_content)
