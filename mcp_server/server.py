@@ -1,5 +1,6 @@
 import os
 from dotenv import load_dotenv  # Add this import
+import asyncio
 
 load_dotenv()  # Add this line to load variables from .env
 
@@ -57,12 +58,20 @@ def analyze_company(url: str) -> dict:
                 "mail_body": None
             }
         
-        email = find_email(html_content)
+        async def run_concurrent_tasks():
+            email_task = asyncio.to_thread(find_email, html_content)
+            contact_task = asyncio.to_thread(has_contact, html_content, url)
+            email_body_task = asyncio.to_thread(draft_email, company_name, is_manufacturer, company_summary)
+            
+            email, contact_url, email_body = await asyncio.gather(
+                email_task, contact_task, email_body_task
+            )
+            
+            return email, contact_url, email_body
         
-        contact_url = has_contact(html_content, url)
+        email, contact_url, email_body = asyncio.run(run_concurrent_tasks())
+        
         has_contact_page = contact_url is not None
-        
-        email_body = draft_email(company_name, is_manufacturer, company_summary)
         
         result = {
             "manufacturer": is_manufacturer,
@@ -80,4 +89,4 @@ def analyze_company(url: str) -> dict:
         return default_response
 
 if __name__ == "__main__":
-    mcp.run(transport="sse")  # defaults to 0.0.0.0:8000
+    mcp.run()  # defaults to stdio transport
