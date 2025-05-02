@@ -45,6 +45,14 @@ def analyze_company(url: str) -> dict:
         
         is_manufacturer = classify_manufacturer(text_content)
         
+        if not is_manufacturer:
+            return {
+                "manufacturer": False,
+                "email": None,
+                "contact": False,
+                "mail_body": draft_email(company_name, False)
+            }
+        
         email = find_email(html_content)
         
         has_contact_page = has_contact(html_content, url)
