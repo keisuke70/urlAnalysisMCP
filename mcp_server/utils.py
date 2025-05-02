@@ -4,6 +4,7 @@ from bs4 import BeautifulSoup
 import logging
 from urllib.parse import urljoin, urlparse
 import traceback
+import ssl  # Add ssl module import
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -23,8 +24,30 @@ def fetch_text(url: str) -> tuple:
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
         
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
+        try:
+            # First attempt with default settings
+            response = requests.get(url, headers=headers, timeout=10)
+            response.raise_for_status()
+        except requests.exceptions.SSLError as ssl_err:
+            # Check if it's specifically a DH_KEY_TOO_SMALL error
+            if 'DH_KEY_TOO_SMALL' in str(ssl_err):
+                # Create a custom session with less strict SSL settings
+                session = requests.Session()
+                # Create a custom context that accepts legacy DH key parameters
+                context = ssl.create_default_context()
+                context.set_ciphers('DEFAULT@SECLEVEL=1')  # Lower security level to accept weaker DH keys
+                session.mount('https://', requests.adapters.HTTPAdapter(max_retries=3))
+                
+                # Override the session's SSL configuration
+                session.verify = True
+                session.adapters['https://'].poolmanager.connection_pool_kw['ssl_context'] = context
+                
+                # Retry with the custom session
+                response = session.get(url, headers=headers, timeout=10)
+                response.raise_for_status()
+            else:
+                # Re-raise if it's a different SSL error
+                raise
         
         html_content = response.text
         soup = BeautifulSoup(html_content, 'html.parser')

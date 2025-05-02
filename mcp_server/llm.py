@@ -41,7 +41,7 @@ def _initialize_gemini():
     
     genai.configure(api_key=api_key)
 
-def _call_gemini_with_retry(prompt: str, model:  str = "gemini-2.5-flash-preview-04-17") -> Optional[str]:
+def _call_gemini_with_retry(prompt: str, model:  str = "gemini-2.0-flash") -> Optional[str]:
     """
     Call Gemini API with retry logic for rate limiting.
     
