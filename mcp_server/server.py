@@ -8,7 +8,7 @@ import logging
 import traceback
 
 from .utils import fetch_text, find_email, has_contact, extract_name
-from .llm import classify_manufacturer, draft_email
+from .llm import classify_manufacturer, draft_email, summarize_company
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -43,6 +43,8 @@ def analyze_company(url: str) -> dict:
         
         company_name = extract_name(html_content, text_content, url)
         
+        company_summary = summarize_company(text_content)
+        
         is_manufacturer = classify_manufacturer(text_content)
         
         if not is_manufacturer:
@@ -57,7 +59,7 @@ def analyze_company(url: str) -> dict:
         
         has_contact_page = has_contact(html_content, url)
         
-        email_body = draft_email(company_name, is_manufacturer)
+        email_body = draft_email(company_name, is_manufacturer, company_summary)
         
         result = {
             "manufacturer": is_manufacturer,

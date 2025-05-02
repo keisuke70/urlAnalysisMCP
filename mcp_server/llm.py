@@ -3,7 +3,7 @@ import time
 import logging
 import traceback
 import google.generativeai as genai
-from typing import Optional
+from typing import Optional, Dict, Any
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -11,6 +11,23 @@ logger = logging.getLogger(__name__)
 MAX_RETRIES = 3
 BASE_DELAY = 2
 
+# ────────────────────────────────────────────────────────────────────────────
+# 追加: メール末尾に必ず付けるクロージングブロック
+# ────────────────────────────────────────────────────────────────────────────
+CLOSING_BLOCK = """今回のご連絡は「ご提案」ではなく、現場のリアルなお声をお聞かせいただくためのヒアリングのお願いです。
+Zoomなどのオンラインで、10〜15分程度のお時間を頂戴できましたら幸いです。
+また、ご希望に応じて、超低コスト（場合により無償）での試作ツールのご提供も可能です。
+少しでもご興味をお持ちいただけましたら、以下のカレンダーよりご都合の良い時間をご予約いただくか、候補日時をいくつかご返信いただけますと幸いです。
+▼カレンダー予約リンク
+https://calendar.app.google/jM8gesybkVQEGhww6
+
+株式会社 日本自動化技術
+橋本 武士（はしもと たけし）
+https://japan-automation-technology.vercel.app"""
+
+# ────────────────────────────────────────────────────────────────────────────
+# Gemini 基本処理
+# ────────────────────────────────────────────────────────────────────────────
 def _initialize_gemini():
     """
     Initialize the Gemini API with the API key from environment variables.
@@ -24,7 +41,7 @@ def _initialize_gemini():
     
     genai.configure(api_key=api_key)
 
-def _call_gemini_with_retry(prompt: str, model: str = "gemini-2.5-flash-preview-04-17") -> Optional[str]:
+def _call_gemini_with_retry(prompt: str, model:  str = "gemini-2.5-flash-preview-04-17") -> Optional[str]:
     """
     Call Gemini API with retry logic for rate limiting.
     
@@ -41,6 +58,7 @@ def _call_gemini_with_retry(prompt: str, model: str = "gemini-2.5-flash-preview-
         try:
             model_instance = genai.GenerativeModel(model)
             response = model_instance.generate_content(prompt)
+                
             return response.text
         except Exception as e:
             error_message = str(e).lower()
@@ -60,6 +78,44 @@ def _call_gemini_with_retry(prompt: str, model: str = "gemini-2.5-flash-preview-
     
     return None
 
+# ────────────────────────────────────────────────────────────────────────────
+# 会社要約・分類
+# ────────────────────────────────────────────────────────────────────────────
+def summarize_company(text: str, max_tokens: int = 250) -> str:
+    """
+    Summarize company information in Japanese.
+    
+    Args:
+        text: The website text content
+        max_tokens: Maximum tokens for the summary
+        
+    Returns:
+        str: Japanese summary of the company (≤500 characters)
+        
+    Raises:
+        RuntimeError: If GEMINI_API_KEY is not set
+    """
+    prompt = f"""以下の会社紹介を500字以内で要約してください。
+---
+{text[:15000]}"""
+    
+    
+    try:
+        response = _call_gemini_with_retry(prompt)
+        
+        if not response:
+            logger.warning("Failed to get company summary from LLM. Returning empty string.")
+            return ""
+        
+        return response.strip()
+        
+    except RuntimeError:
+        raise
+    except Exception as e:
+        logger.error(f"Error summarizing company: {str(e)}")
+        logger.error(traceback.format_exc())
+        return ""
+
 def classify_manufacturer(text: str) -> bool:
     """
     Determine if a company is a manufacturer based on website text.
@@ -74,19 +130,19 @@ def classify_manufacturer(text: str) -> bool:
         RuntimeError: If GEMINI_API_KEY is not set
     """
     prompt = f"""
-    Based on the following website text, determine if this company is a manufacturer.
+    以下のウェブサイトテキストに基づいて、この会社が製造業かどうかを判断してください。
     
-    A manufacturer is a company that:
-    - Produces physical goods or products
-    - Has manufacturing facilities, factories, or production lines
-    - Mentions manufacturing processes, equipment, or machinery
-    - Discusses product specifications, materials, or production capabilities
-    - Mentions terms like "manufacturing", "production", "factory", "assembly", etc.
+    製造業の特徴:
+    - 物理的な商品や製品を生産している
+    - 製造施設、工場、生産ラインを持っている
+    - 製造プロセス、設備、機械について言及している
+    - 製品仕様、材料、生産能力について説明している
+    - 「製造」「生産」「工場」「組立」などの用語が使われている
     
-    Website text:
-    {text[:8000]}  # Limit text length to avoid token limits
+    ウェブサイトテキスト:
+    {text[:8000]}
     
-    Answer with ONLY "YES" if the company is a manufacturer, or "NO" if it is not.
+    会社が製造業である場合は「YES」、そうでない場合は「NO」だけで答えてください。
     """
     
     try:
@@ -106,65 +162,74 @@ def classify_manufacturer(text: str) -> bool:
         logger.error(traceback.format_exc())
         return False
 
-def draft_email(company_name: str, is_manufacturer: bool) -> str:
+# ────────────────────────────────────────────────────────────────────────────
+# メール生成
+# ────────────────────────────────────────────────────────────────────────────
+def draft_email(company_name: str, is_manufacturer: bool, company_summary: str = "") -> str:
     """
-    Generate a tailored email based on company type.
+    Generate a tailored Japanese email based on company type and summary.
     
     Args:
         company_name: The name of the company
         is_manufacturer: Whether the company is a manufacturer
+        company_summary: Summary of the company (optional)
         
     Returns:
-        str: The generated email body
+        str: The generated email body in Japanese
         
     Raises:
         RuntimeError: If GEMINI_API_KEY is not set
     """
-    if is_manufacturer:
-        prompt = f"""
-        Draft a short, polite outreach email to {company_name}, which is a manufacturing company.
-        
-        The email should:
-        - Be addressed to {company_name}
-        - Mention manufacturing challenges and solutions
-        - Discuss optimization of production processes
-        - Mention improving efficiency and reducing costs
-        - Suggest a brief call to discuss potential collaboration
-        - Be professional, concise (5-7 sentences), and not overly sales-focused
-        - End with a polite call to action
-        
-        Do not include email headers (To, From, Subject). Just write the email body.
-        """
-    else:
-        prompt = f"""
-        Draft a short, polite outreach email to {company_name}, which is not a manufacturing company.
-        
-        The email should:
-        - Be addressed to {company_name}
-        - Keep wording generic with a digital-transformation value proposition
-        - Mention improving business processes and customer experience
-        - Discuss data-driven decision making and automation
-        - Suggest a brief call to discuss potential collaboration
-        - Be professional, concise (5-7 sentences), and not overly sales-focused
-        - End with a polite call to action
-        
-        Do not include email headers (To, From, Subject). Just write the email body.
-        """
+    my_company_pitch = """私たちは、生成AIやアジャイル開発手法を活用し、現場業務を支援するオーダーメイドツールの開発に取り組んでいる、学生発のAIスタートアップ「株式会社 日本自動化技術」です。
+現在、製造業の現場における課題やお困りごとについて、幅広くヒアリングを実施しております。
+たとえば、以下のようなお悩みはありませんか？
+日報や在庫管理が紙やExcel中心で煩雑になっている
+熟練者に依存した作業が多く、技術継承や属人化の解消が難しい
+新しい設備の導入や改修が"ぶっつけ本番"になりがちで、事前検証が困難
+これまで「DXには多額の投資が必要」と導入を見送られてきた企業様にも、
+私たちは従来の1/3以下のコストで、現場に本当にフィットする高精度なツールを、短期間でご提供できる可能性があります。
+この背景には、私たちが持つ生成AIの技術力と柔軟な開発体制があります。"""
+    
+    # —―― LLM にはクロージングブロックを出力しないよう明示指示 ―――
+    email_prompt = f"""
+あなたは丁寧なビジネスメール生成AIです。
+
+{my_company_pitch}
+
+会社名: {company_name}
+会社概要: {company_summary}
+
+・上記情報に基づいて 400〜500 字の日本語メール本文を作成する
+・件名は「現場DXに関するヒアリングのお願い」で固定
+・敬語・改行・箇条書きを適宜使用
+・メール本文のみを出力し、件名や署名は含めない
+・以下のクロージングブロックは **出力しない**（後で自動付与される）
+{CLOSING_BLOCK}
+"""
     
     try:
-        response = _call_gemini_with_retry(prompt)
+        response = _call_gemini_with_retry(
+            email_prompt
+        )
         
         if not response:
             logger.warning("Failed to generate email from LLM. Returning empty string.")
             return ""
         
-        response = response.strip()
+        email_body = response.strip()
+
+        # モデルが誤ってクロージングブロックを含めた場合除去
+        if "今回のご連絡は" in email_body:
+            email_body = email_body.split("今回のご連絡は", 1)[0].rstrip()
         
-        if is_manufacturer:
-            response = response.replace("\n\n", "\n")
+        # 句点で終わらせる（なければ追加）
+        if not email_body.endswith("。"):
+            email_body = email_body.rstrip("。") + "。"
         
-        return response
-        
+        # クロージングブロックを結合
+        full_email = f"{email_body}\n\n{CLOSING_BLOCK}"
+        return full_email
+
     except RuntimeError:
         raise
     except Exception as e:
