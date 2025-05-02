@@ -16,14 +16,7 @@ logger = logging.getLogger(__name__)
 
 mcp = FastMCP("company_checker")
 
-@mcp.tool(
-    annotations={
-        "title": "Analyze Company Website",
-        "readOnlyHint": True,
-        "openWorldHint": True
-    }
-)
-async def analyze_company(url: str) -> dict:
+async def _analyze_company_async(url: str) -> dict:
     """
     Input: company homepage URL.
     Output: JSON {manufacturer, email, contact, contact_url, mail_body}.
@@ -82,6 +75,26 @@ async def analyze_company(url: str) -> dict:
         logger.error(f"Error analyzing {url}: {str(e)}")
         logger.error(traceback.format_exc())
         return default_response
+
+@mcp.tool(
+    annotations={
+        "title": "Analyze Company Website",
+        "readOnlyHint": True,
+        "openWorldHint": True
+    }
+)
+def analyze_company(url: str) -> dict:
+    """
+    Input: company homepage URL.
+    Output: JSON {manufacturer, email, contact, contact_url, mail_body}.
+    
+    This is a synchronous wrapper around the async implementation.
+    """
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(_analyze_company_async(url))
+    finally:
+        loop.close()
 
 if __name__ == "__main__":
     mcp.run()  # defaults to stdio transport
