@@ -1,3 +1,8 @@
 # ...existing code...
 .env
 __pycache__/
+
+# Output files
+*.csv
+*.log
+*.json

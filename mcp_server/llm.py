@@ -4,6 +4,9 @@ import logging
 import traceback
 import google.generativeai as genai
 from typing import Optional, Dict, Any
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -241,3 +244,51 @@ def draft_email(company_name: str, is_manufacturer: bool, company_summary: str =
         logger.error(f"Error drafting email: {str(e)}")
         logger.error(traceback.format_exc())
         return ""
+
+# 追加: フォーム回答用の当社固定情報 ------------------------------
+BASE_COMPANY_INFO = {
+    "company_name": "株式会社 日本自動化技術",
+    "contact_person": "橋本 武士",
+    "email": "info@jat-example.co.jp",
+    "phone": "03-1234-5678",
+    "address": "東京都千代田区丸の内1-1-1",
+    "industry": "ソフトウェア開発 / DX コンサル",
+    "employees": "2",
+    "website": "https://japan-automation-technology.vercel.app",
+    "budget_range": "〜300万円程度",
+    "biggest_challenge": "現場DXにおける紙・Excel業務の負担"
+}
+# ---------------------------------------------------------------
+
+def generate_form_answers(fields: list[dict[str, str]],
+                          base_info: dict[str, str] = BASE_COMPANY_INFO) -> dict[str, str]:
+    """
+    Gemini にフォーム項目へ入れる回答を JSON で生成させる。
+    `fields` は {name,label,type} のリスト。
+    """
+    schema_lines = "\n".join(
+        [f'  "{f["name"]}": "{{string}}",' for f in fields]
+    )
+    prompt = f"""
+あなたは問い合わせフォームに入力する最適な回答を JSON で生成する AI です。
+# 当社情報
+{base_info}
+
+# 出力形式
+{{ "answers": {{
+{schema_lines}
+}}}}
+
+# 入力フィールド一覧
+{fields}
+
+各 answer 値には 50 文字以内の日本語を推奨し、質問意図に沿って当社情報を活用してください。
+"""
+    raw = _call_gemini_with_retry(prompt, model="gemini-2.5-flash")
+    try:
+        import json, re
+        json_txt = re.search(r"\{.*\}", raw, re.S).group(0)
+        return json.loads(json_txt)["answers"]
+    except Exception:
+        logger.warning("Failed to parse Gemini JSON, falling back to空回答")
+        return {f["name"]: "" for f in fields}

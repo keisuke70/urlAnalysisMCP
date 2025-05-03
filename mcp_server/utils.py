@@ -199,3 +199,94 @@ def extract_name(html_content: str, text_content: str, url: str) -> str:
     except Exception as e:
         logger.error(f"Error extracting company name: {str(e)}")
         return "Company"
+
+def extract_form_fields(html: str) -> list[dict[str, str]]:
+    """
+    `<form>` 内の主要フィールド (input/textarea/select) 情報を抽出。
+    戻り値: [{"name": "email", "label": "メールアドレス", "type": "email"}, ...]
+    """
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(html, "html.parser")
+    form = soup.find("form")
+    if not form:
+        return []
+    fields = []
+    for tag in form.find_all(["input", "textarea", "select"]):
+        name = tag.get("name") or tag.get("id") or ""
+        ftype = tag.get("type", tag.name)
+        # ラベル文字列を推測
+        label = ""
+        if tag.get("aria-label"):
+            label = tag["aria-label"]
+        elif tag.get("placeholder"):
+            label = tag["placeholder"]
+        else:
+            lbl = tag.find_parent("label")
+            label = lbl.get_text(strip=True) if lbl else ""
+        if name:
+            fields.append({"name": name, "label": label, "type": ftype})
+    return fields
+
+def auto_submit_form(contact_url: str, email_body: str, dry_run: bool = False) -> bool | dict:
+    """Return True if submission appears to succeed, False otherwise. If dry_run, return the field values instead of submitting."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        logger.warning("playwright not installed – skipping form submission.")
+        return False
+
+    # Fetch HTML once for field extraction
+    html, _ = fetch_text(contact_url)
+    if not html:
+        logger.warning("Could not fetch contact page for field extraction.")
+        return False
+
+    fields_meta = extract_form_fields(html)
+    if email_body and not any(f["name"] == "message" for f in fields_meta):
+        # add manual message field meta if site didn't expose name attr
+        fields_meta.append({"name": "message", "label": "お問い合わせ内容", "type": "textarea"})
+
+    from mcp_server.llm import generate_form_answers
+    answers = generate_form_answers(fields_meta)
+    if "message" in answers:
+        # Overwrite with our crafted body to keep consistency
+        answers["message"] = email_body
+
+    if dry_run:
+        # Return what would be filled in the form
+        return {"fields": fields_meta, "answers": answers}
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto(contact_url, timeout=25_000)
+
+            for f in fields_meta:
+                selector = f'[name="{f["name"]}"]'
+                if page.locator(selector).count() == 0:
+                    continue
+                value = answers.get(f["name"], "")
+                ftype = f.get("type", "text")
+                if ftype in ("checkbox", "radio"):
+                    if str(value).lower() in ("yes", "true", "on", "1"):
+                        page.locator(selector).first.check()
+                elif ftype == "select":
+                    page.locator(selector).first.select_option(label=value)
+                else:
+                    page.locator(selector).first.fill(value)
+
+            # try clicking submit
+            if page.locator("button[type=submit]").count():
+                page.locator("button[type=submit]").first.click()
+            elif page.locator("input[type=submit]").count():
+                page.locator("input[type=submit]").first.click()
+            else:
+                page.keyboard.press("Enter")
+
+            page.wait_for_load_state("networkidle", timeout=10_000)
+            browser.close()
+            return True
+    except Exception as exc:
+        logger.warning(f"Auto form submission failed: {exc}")
+        return False
