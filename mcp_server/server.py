@@ -101,4 +101,8 @@ async def analyze_company(url: str) -> dict:
     return await _analyze_company_async(url)
 
 if __name__ == "__main__":
-    mcp.run()  # defaults to stdio transport
+    use_stdio = os.environ.get("USE_STDIO", "").lower() in ("true", "1", "yes")
+    if use_stdio:
+        mcp.run()  # Use stdio transport
+    else:
+        mcp.run(transport="sse")  # Use SSE transport for HTTP access
