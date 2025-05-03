@@ -351,24 +351,42 @@ def auto_submit_form(contact_url: str, email_body: str, dry_run: bool = False) -
 
             for f in fields_meta:
                 selector = f'[name="{f["name"]}"]'
-                if page.locator(selector).count() == 0:
+                loc = page.locator(selector).first
+                # hiddenなフィールドは無視し、visibleなフィールドだけ自動入力
+                if loc.count() == 0 or not loc.is_visible():
                     continue
                 value = answers.get(f["name"], "")
                 ftype = f.get("type", "text")
                 if ftype in ("checkbox", "radio"):
                     if str(value).lower() in ("yes", "true", "on", "1"):
-                        page.locator(selector).first.check()
+                        loc.check()
                 elif ftype == "select":
-                    page.locator(selector).first.select_option(label=value)
+                    loc.select_option(label=value)
                 else:
-                    page.locator(selector).first.fill(value)
+                    loc.fill(value)
 
-            # try clicking submit
-            if page.locator("button[type=submit]").count():
-                page.locator("button[type=submit]").first.click()
-            elif page.locator("input[type=submit]").count():
-                page.locator("input[type=submit]").first.click()
-            else:
+            # --- 送信ボタンの内容でフィルタリング ---
+            skip_keywords = ["資料", "ダウンロード", "カタログ", "catalog", "download"]
+            def is_skip_button(el):
+                text = (el.inner_text() or "") + " " + (el.get_attribute("value") or "") + " " + (el.get_attribute("name") or "")
+                text = text.lower()
+                return any(k in text for k in skip_keywords)
+
+            # button[type=submit]
+            submit_buttons = page.locator("button[type=submit],input[type=submit]")
+            found = False
+            for i in range(submit_buttons.count()):
+                btn = submit_buttons.nth(i)
+                try:
+                    if is_skip_button(btn):
+                        continue
+                    btn.click()
+                    found = True
+                    break
+                except Exception:
+                    continue
+            if not found:
+                # fallback: Enter
                 page.keyboard.press("Enter")
 
             page.wait_for_load_state("networkidle", timeout=10_000)
