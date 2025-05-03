@@ -20,7 +20,7 @@ from mcp_server.utils import (
 from mcp_server.llm import (
     classify_manufacturer,
     draft_email,
-    summarize_company,
+    generate_company_impression,  # ← 変更
     generate_form_answers,  # new helper to craft answers
 )
 
@@ -67,8 +67,8 @@ def process_company(company_name: str, url: str) -> Dict[str, Optional[str]]:
             return result
 
         # Manufacturer path
-        summary = summarize_company(text_content)
-        email_body = draft_email(company_name, True, summary)
+        impression_text = generate_company_impression(text_content)
+        email_body = draft_email(company_name, impression_text)
         email_address = find_email(html_content)
         contact_page_url = has_contact(html_content, url)
 

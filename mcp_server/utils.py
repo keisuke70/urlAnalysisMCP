@@ -89,18 +89,23 @@ def find_email(html_content: str) -> str:
 
 def has_contact(html_content: str, base_url: str) -> str:
     """
-    Detect if the site has a contact page or form.
-    
+    Detect if the site has a contact page or form (Japanese-focused).
     Args:
         html_content: HTML content to search
         base_url: Base URL for resolving relative links
-        
     Returns:
         str: URL to the contact page/form if found, None otherwise
     """
     try:
         soup = BeautifulSoup(html_content, 'html.parser')
-        
+
+        # Japanese and English indicators
+        contact_indicators = [
+            'お問い合わせ', 'お問合せ', '問合せ', '連絡', 'inquiry', 'otoiawase',
+            'contact', 'get in touch', 'reach out', 'email us'
+        ]
+
+        # 1. Check forms
         forms = soup.find_all('form')
         for form in forms:
             form_text = form.get_text().lower()
@@ -108,9 +113,6 @@ def has_contact(html_content: str, base_url: str) -> str:
             form_id = form.get('id', '').lower()
             form_class = form.get('class', [])
             form_class = ' '.join(form_class).lower() if form_class else ''
-            
-            contact_indicators = ['contact', 'message', 'email us', 'get in touch', 'reach out']
-            
             for indicator in contact_indicators:
                 if (indicator in form_text or 
                     indicator in form_action or 
@@ -119,21 +121,22 @@ def has_contact(html_content: str, base_url: str) -> str:
                     if form.get('action'):
                         return urljoin(base_url, form.get('action'))
                     return base_url
-        
+
+        # 2. Check links
         links = soup.find_all('a')
         for link in links:
             href = link.get('href', '')
             link_text = link.get_text().lower()
-            
-            contact_indicators = ['contact', 'get in touch', 'reach out', 'email us']
-            
             for indicator in contact_indicators:
                 if indicator in link_text or indicator in href.lower():
                     if href:
                         return urljoin(base_url, href)
-        
-        contact_elements = soup.find_all(['div', 'section', 'footer'], 
-                                       class_=lambda c: c and ('contact' in c.lower() if c else False))
+
+        # 3. Check for elements with contact-related class names
+        contact_elements = soup.find_all(
+            ['div', 'section', 'footer'], 
+            class_=lambda c: c and any(ind in c.lower() for ind in contact_indicators)
+        )
         if contact_elements:
             for element in contact_elements:
                 links = element.find_all('a')
@@ -142,9 +145,14 @@ def has_contact(html_content: str, base_url: str) -> str:
                     if href:
                         return urljoin(base_url, href)
             return base_url
-            
+
+        # 4. Fallback: look for URLs ending with inquiry.html or similar
+        for link in links:
+            href = link.get('href', '')
+            if href and (href.lower().endswith('inquiry.html') or href.lower().endswith('otoiawase.html')):
+                return urljoin(base_url, href)
+
         return None
-        
     except Exception as e:
         logger.error(f"Error checking for contact: {str(e)}")
         return None
@@ -202,29 +210,108 @@ def extract_name(html_content: str, text_content: str, url: str) -> str:
 
 def extract_form_fields(html: str) -> list[dict[str, str]]:
     """
-    `<form>` 内の主要フィールド (input/textarea/select) 情報を抽出。
-    戻り値: [{"name": "email", "label": "メールアドレス", "type": "email"}, ...]
+    全ての<form>内の主要フィールド (input/textarea/select) を重複なく抽出。
+    テーブル型フォームにも対応。name/idがなければclassやラベルから生成。
+    hiddenフィールドやname属性が空のinputは除外。
+    tr内の全input/textarea/selectを個別に抽出し、thラベルをlabelとして割り当てる。
+    placeholder属性も含める。
+    selectフィールドやラジオボタンの場合、選択肢 (value/text) を含める。
+    戻り値: [{"name": ..., "label": ..., "type": ..., "placeholder": ..., "options": [...]}]
     """
     from bs4 import BeautifulSoup
     soup = BeautifulSoup(html, "html.parser")
-    form = soup.find("form")
-    if not form:
-        return []
     fields = []
-    for tag in form.find_all(["input", "textarea", "select"]):
-        name = tag.get("name") or tag.get("id") or ""
-        ftype = tag.get("type", tag.name)
-        # ラベル文字列を推測
-        label = ""
-        if tag.get("aria-label"):
-            label = tag["aria-label"]
-        elif tag.get("placeholder"):
-            label = tag["placeholder"]
-        else:
-            lbl = tag.find_parent("label")
-            label = lbl.get_text(strip=True) if lbl else ""
-        if name:
-            fields.append({"name": name, "label": label, "type": ftype})
+    seen = set()
+    for form in soup.find_all("form"):
+        # --- Collect radio groups by name ---
+        radio_groups = {}
+        for radio in form.find_all("input", {"type": "radio"}):
+            name = radio.get("name") or radio.get("id")
+            if not name:
+                continue
+            if name not in radio_groups:
+                radio_groups[name] = []
+            # Try to get label: from <label> or sibling <span>
+            label = ""
+            parent_label = radio.find_parent("label")
+            if parent_label:
+                label = parent_label.get_text(strip=True)
+            else:
+                # Try next sibling span
+                next_span = radio.find_next_sibling("span")
+                if next_span:
+                    label = next_span.get_text(strip=True)
+            radio_groups[name].append({
+                "value": radio.get("value", ""),
+                "text": label or radio.get("value", "")
+            })
+        # --- Add radio groups as fields ---
+        for name, options in radio_groups.items():
+            if name in seen:
+                continue
+            seen.add(name)
+            # Try to get a group label from the first radio's parent or a nearby label
+            group_label = ""
+            first_radio = form.find("input", {"type": "radio", "name": name})
+            if first_radio:
+                # Look for a label element before the radio group
+                prev = first_radio.find_previous(["label", "div", "th"])
+                if prev:
+                    group_label = prev.get_text(strip=True)
+            fields.append({
+                "name": name,
+                "label": group_label,
+                "type": "radio",
+                "placeholder": "",
+                "options": options
+            })
+        # --- Table fields (unchanged) ---
+        for tr in form.find_all("tr"):
+            th = tr.find("th")
+            label = th.get_text(strip=True) if th else ""
+            for tag in tr.find_all(["input", "textarea", "select"]):
+                ftype = tag.get("type", tag.name)
+                name = tag.get("name") or tag.get("id") or ""
+                if ftype == "hidden" or not name:
+                    continue
+                if name in seen:
+                    continue
+                seen.add(name)
+                placeholder = tag.get("placeholder", "")
+                options = []
+                if tag.name == "select":
+                    for opt in tag.find_all("option"):
+                        options.append({"value": opt.get("value", ""), "text": opt.get_text(strip=True)})
+                field = {"name": name, "label": label, "type": ftype, "placeholder": placeholder}
+                if options:
+                    field["options"] = options
+                fields.append(field)
+        # --- Non-table fields (unchanged, but skip radios) ---
+        for tag in form.find_all(["input", "textarea", "select"]):
+            ftype = tag.get("type", tag.name)
+            name = tag.get("name") or tag.get("id") or ""
+            if ftype == "hidden" or not name or ftype == "radio":
+                continue
+            if name in seen:
+                continue
+            seen.add(name)
+            label = ""
+            if tag.get("aria-label"):
+                label = tag["aria-label"]
+            elif tag.get("placeholder"):
+                label = tag["placeholder"]
+            else:
+                lbl = tag.find_parent("label")
+                label = lbl.get_text(strip=True) if lbl else ""
+            placeholder = tag.get("placeholder", "")
+            options = []
+            if tag.name == "select":
+                for opt in tag.find_all("option"):
+                    options.append({"value": opt.get("value", ""), "text": opt.get_text(strip=True)})
+            field = {"name": name, "label": label, "type": ftype, "placeholder": placeholder}
+            if options:
+                field["options"] = options
+            fields.append(field)
     return fields
 
 def auto_submit_form(contact_url: str, email_body: str, dry_run: bool = False) -> bool | dict:
@@ -242,19 +329,19 @@ def auto_submit_form(contact_url: str, email_body: str, dry_run: bool = False) -
         return False
 
     fields_meta = extract_form_fields(html)
-    if email_body and not any(f["name"] == "message" for f in fields_meta):
-        # add manual message field meta if site didn't expose name attr
+    # Only add manual message field if no textarea exists at all
+    if email_body and not any(f["type"] == "textarea" for f in fields_meta):
         fields_meta.append({"name": "message", "label": "お問い合わせ内容", "type": "textarea"})
 
     from mcp_server.llm import generate_form_answers
-    answers = generate_form_answers(fields_meta)
+    answers = generate_form_answers(fields_meta, mail_body=email_body)
     if "message" in answers:
         # Overwrite with our crafted body to keep consistency
         answers["message"] = email_body
 
     if dry_run:
-        # Return what would be filled in the form
-        return {"fields": fields_meta, "answers": answers}
+        # Return only the answers dict for dry run
+        return answers
 
     try:
         with sync_playwright() as p:

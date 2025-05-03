@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name%s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
@@ -82,40 +82,30 @@ def _call_gemini_with_retry(prompt: str, model:  str = "gemini-2.0-flash") -> Op
     return None
 
 # ────────────────────────────────────────────────────────────────────────────
-# 会社要約・分類
+# 会社印象文生成（旧 summarize_company）
 # ────────────────────────────────────────────────────────────────────────────
-def summarize_company(text: str, max_tokens: int = 250) -> str:
+def generate_company_impression(text: str) -> str:
     """
-    Summarize company information in Japanese.
-    
+    会社ホームページを見て感銘を受けた一文を生成する。
     Args:
-        text: The website text content
-        max_tokens: Maximum tokens for the summary
-        
+        text: 会社のウェブサイトテキスト
     Returns:
-        str: Japanese summary of the company (≤500 characters)
-        
-    Raises:
-        RuntimeError: If GEMINI_API_KEY is not set
+        str: 感銘を受けた一文（例: 御社の〇〇に感銘を受けました）
     """
-    prompt = f"""以下の会社紹介を500字以内で要約してください。
+    prompt = f"""あなたは日本語のビジネスメールAIです。下記の会社紹介文を読み、
+ホームページを拝見した印象として、御社の強みや特徴に感銘を受けた一文（敬語、50〜120字程度）を生成してください。
 ---
 {text[:15000]}"""
-    
-    
     try:
         response = _call_gemini_with_retry(prompt)
-        
         if not response:
-            logger.warning("Failed to get company summary from LLM. Returning empty string.")
+            logger.warning("Failed to get company impression from LLM. Returning empty string.")
             return ""
-        
         return response.strip()
-        
     except RuntimeError:
         raise
     except Exception as e:
-        logger.error(f"Error summarizing company: {str(e)}")
+        logger.error(f"Error generating company impression: {str(e)}")
         logger.error(traceback.format_exc())
         return ""
 
@@ -168,82 +158,17 @@ def classify_manufacturer(text: str) -> bool:
 # ────────────────────────────────────────────────────────────────────────────
 # メール生成
 # ────────────────────────────────────────────────────────────────────────────
-def draft_email(company_name: str, is_manufacturer: bool, company_summary: str = "") -> str:
+def draft_email(company_name: str, impression_text: str) -> str:
     """
-    Generate a tailored Japanese email based on company type and summary.
-    
+    会社名と感銘文を受け取り、決まったテンプレートでメール本文を合成する。
     Args:
-        company_name: The name of the company
-        is_manufacturer: Whether the company is a manufacturer
-        company_summary: Summary of the company (optional)
-        
+        company_name: 会社名
+        impression_text: 感銘を受けた一文
     Returns:
-        str: The generated email body in Japanese
-        
-    Raises:
-        RuntimeError: If GEMINI_API_KEY is not set
+        str: メール本文
     """
-    my_company_pitch = """私たちは、生成AIや最先端の開発手法を活用し、現場業務を支援するオーダーメイドツールの開発に取り組んでいる、学生発のAIスタートアップ「株式会社 日本自動化技術」です。
-現在、製造業の現場における課題やお困りごとについて、幅広くヒアリングを実施しております。
-たとえば、以下のようなお悩みはありませんか？
-日報や在庫管理が紙やExcel中心で煩雑になっている
-熟練者に依存した作業が多く、技術継承や属人化の解消が難しい
-これまで「DXには多額の投資が必要」と導入を見送られてきた企業様にも、
-私たちは従来の1/3以下のコストで、現場に本当にフィットする高精度なツールを、短期間でご提供できる可能性があります。
-この背景には、私たちが持つ生成AIの技術力と柔軟な開発体制があります。"""
-    
-    # —―― LLM にはクロージングブロックを出力しないよう明示指示 ―――
-    email_prompt = f"""
-あなたは丁寧なビジネスメール生成AIです。
-
-{my_company_pitch}
-
-会社名: {company_name}
-会社概要: {company_summary}
-
-・上記情報に基づいて 400〜500 字の日本語メール本文を作成する
-・敬語・改行・箇条書きを適宜使用
-・突然のご連絡失礼いたしますで始める
-★・初回連絡として自然な表現を用い、面識前提や過度なお世辞の表現は使用しない
-・メール本文のみを出力し、件名や署名は含めない
-・以下のクロージングブロックは **出力しない**（後で自動付与される）
-{CLOSING_BLOCK}
-"""
-    
-    try:
-        response = _call_gemini_with_retry(
-            email_prompt
-        )
-        
-        if not response:
-            logger.warning("Failed to generate email from LLM. Returning empty string.")
-            return ""
-        
-        email_body = response.strip()
-
-        # モデルが誤ってクロージングブロックを含めた場合除去
-        if "今回のご連絡は" in email_body:
-            email_body = email_body.split("今回のご連絡は", 1)[0].rstrip()
-        
-        # 念のため禁止ワードが混入したら除去
-        for phrase in ("お世話になっております", "大変感銘を受けております"):
-            if phrase in email_body:
-                email_body = email_body.replace(phrase, "")
-        
-        # 句点で終わらせる（なければ追加）
-        if not email_body.endswith("。"):
-            email_body = email_body.rstrip("。") + "。"
-        
-        # クロージングブロックを結合
-        full_email = f"{email_body}\n\n{CLOSING_BLOCK}"
-        return full_email
-
-    except RuntimeError:
-        raise
-    except Exception as e:
-        logger.error(f"Error drafting email: {str(e)}")
-        logger.error(traceback.format_exc())
-        return ""
+    template = f"""突然のご連絡失礼いたします。\n\n株式会社 日本自動化技術の橋本と申します。\n\n弊社は、生成AIや最先端の開発手法を活用し、製造業の現場業務を支援するオーダーメイドツールの開発に取り組んでいる、学生発のAIスタートアップです。\n\n{impression_text}\n\nつきましては、大変恐縮ではございますが、製造業の現場における課題やお困りごとについて、幅広くヒアリングさせて頂きたくご連絡いたしました。\n\nたとえば、以下のようなお悩みはありませんでしょうか？\n\n*   日報や在庫管理が紙やExcel中心で煩雑になっている\n*   熟練者に依存した作業が多く、技術継承や属人化の解消が難しい\n\n弊社は、従来の1/3以下のコストで、現場に本当にフィットする高精度なツールを短期間でご提供できる可能性があります。\n\nこの背景には、弊社の持つ生成AIの技術力と柔軟な開発体制があります。\n\n貴社が現在抱えていらっしゃる課題や、将来的な展望についてお聞かせいただければ幸いです。\n\n{CLOSING_BLOCK}"""
+    return template
 
 # 追加: フォーム回答用の当社固定情報 ------------------------------
 BASE_COMPANY_INFO = {
@@ -252,43 +177,77 @@ BASE_COMPANY_INFO = {
     "email": "info@jat-example.co.jp",
     "phone": "03-1234-5678",
     "address": "東京都千代田区丸の内1-1-1",
+    "zip_code": "2360042",
     "industry": "ソフトウェア開発 / DX コンサル",
     "employees": "2",
     "website": "https://japan-automation-technology.vercel.app",
     "budget_range": "〜300万円程度",
-    "biggest_challenge": "現場DXにおける紙・Excel業務の負担"
+    # 分割住所用
+    "pref": "東京都",
+    "address1": "千代田区丸の内",
+    "address2": "1-1-1",
 }
+
+# Mapping for Japanese field names/labels to BASE_COMPANY_INFO keys
+JP_FIELD_MAP = {
+    "御社名": "company_name",
+    "会社名": "company_name",
+    "お名前": "contact_person",
+    "氏名": "contact_person",
+    "メールアドレス": "email",
+    "e-mail": "email",
+    "電話番号": "phone",
+    "ご住所": "address",
+    "住所": "address",
+    "部署名": "department",
+    "業種": "industry",
+    "従業員数": "employees",
+    "ホームページ": "website",
+    "ご予算": "budget_range",
+    "郵便番号": "zip_code",
+    "zip": "zip_code",
+    "addr": "address",
+}
+
 # ---------------------------------------------------------------
 
 def generate_form_answers(fields: list[dict[str, str]],
-                          base_info: dict[str, str] = BASE_COMPANY_INFO) -> dict[str, str]:
+                          base_info: dict[str, str] = BASE_COMPANY_INFO,
+                          mail_body: str = None) -> dict[str, str]:
     """
-    Gemini にフォーム項目へ入れる回答を JSON で生成させる。
-    `fields` は {name,label,type} のリスト。
+    LLMの意味推論を最大限活用し、どんな日本語フォームでも最適な値を自動割当する。
+    fields: {name, label, type, ...} のリスト
+    base_info: 会社情報（dict）
+    mail_body: メインのメッセージ欄に必ず入れる本文（あれば）
     """
-    schema_lines = "\n".join(
-        [f'  "{f["name"]}": "{{string}}",' for f in fields]
-    )
+    import json
+    # メール本文を会社情報に追加（LLMが使いやすいように）
+    info = dict(base_info)
+    if mail_body:
+        info["mail_body"] = mail_body
+    # LLMへのプロンプト
     prompt = f"""
-あなたは問い合わせフォームに入力する最適な回答を JSON で生成する AI です。
-# 当社情報
-{base_info}
+あなたは日本語の問い合わせフォーム自動入力AIです。
+下記の会社情報（info）をもとに、fields一覧の各項目に最適な値をJSON形式で割り当ててください。
+- name, label, type, placeholder, などから意味を推論し、姓・名・郵便番号・電話番号・メール・会社名・部署・カナ・確認欄なども正確に分割して割り当ててください。
+- メインのメッセージ欄（お問い合わせ内容・ご質問・ご要望など）にはmail_bodyを必ず入れてください。
+- "確認"や"再入力"などの確認欄には、対応する値をそのままコピーしてください。
+- 50文字以内が望ましい場合は自動で短縮してください。
+- 出力は {{name: value, ...}} のJSON形式のみで返してください。
 
-# 出力形式
-{{ "answers": {{
-{schema_lines}
-}}}}
+# info
+{json.dumps(info, ensure_ascii=False)}
 
-# 入力フィールド一覧
-{fields}
-
-各 answer 値には 50 文字以内の日本語を推奨し、質問意図に沿って当社情報を活用してください。
+# fields
+{json.dumps(fields, ensure_ascii=False)}
 """
-    raw = _call_gemini_with_retry(prompt, model="gemini-2.5-flash")
+    raw = _call_gemini_with_retry(prompt, model="gemini-2.0-flash")
     try:
-        import json, re
+        import re
         json_txt = re.search(r"\{.*\}", raw, re.S).group(0)
-        return json.loads(json_txt)["answers"]
+        answers = json.loads(json_txt)
+        return answers
     except Exception:
         logger.warning("Failed to parse Gemini JSON, falling back to空回答")
+        # fallback: 全て空
         return {f["name"]: "" for f in fields}
