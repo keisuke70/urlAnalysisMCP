@@ -1,6 +1,5 @@
 import os
 from dotenv import load_dotenv  # Add this import
-import asyncio
 
 load_dotenv()  # Add this line to load variables from .env
 
@@ -16,16 +15,22 @@ logger = logging.getLogger(__name__)
 
 mcp = FastMCP("company_checker")
 
-async def _analyze_company_async(url: str) -> dict:
+@mcp.tool(
+    annotations={
+        "title": "Analyze Company Website",
+        "readOnlyHint": True,
+        "openWorldHint": True
+    }
+)
+def analyze_company(url: str) -> dict:
     """
     Input: company homepage URL.
-    Output: JSON {manufacturer, email, contact, contact_url, mail_body}.
+    Output: JSON {manufacturer, email, contact, mail_body}.
     """
     default_response = {
         "manufacturer": False,
         "email": None,
         "contact": False,
-        "contact_url": None,
         "mail_body": ""
     }
     
@@ -47,25 +52,19 @@ async def _analyze_company_async(url: str) -> dict:
                 "manufacturer": False,
                 "email": None,
                 "contact": False,
-                "contact_url": None,
                 "mail_body": None
             }
         
-        email_task = asyncio.to_thread(find_email, html_content)
-        contact_task = asyncio.to_thread(has_contact, html_content, url)
-        email_body_task = asyncio.to_thread(draft_email, company_name, is_manufacturer, company_summary)
+        email = find_email(html_content)
         
-        email, contact_url, email_body = await asyncio.gather(
-            email_task, contact_task, email_body_task
-        )
+        has_contact_page = has_contact(html_content, url)
         
-        has_contact_page = contact_url is not None
+        email_body = draft_email(company_name, is_manufacturer, company_summary)
         
         result = {
             "manufacturer": is_manufacturer,
             "email": email,
             "contact": has_contact_page,
-            "contact_url": contact_url,
             "mail_body": email_body
         }
         
@@ -76,25 +75,6 @@ async def _analyze_company_async(url: str) -> dict:
         logger.error(traceback.format_exc())
         return default_response
 
-@mcp.tool(
-    annotations={
-        "title": "Analyze Company Website",
-        "readOnlyHint": True,
-        "openWorldHint": True
-    }
-)
-def analyze_company(url: str) -> dict:
-    """
-    Input: company homepage URL.
-    Output: JSON {manufacturer, email, contact, contact_url, mail_body}.
-    
-    This is a synchronous wrapper around the async implementation.
-    """
-    loop = asyncio.new_event_loop()
-    try:
-        return loop.run_until_complete(_analyze_company_async(url))
-    finally:
-        loop.close()
-
 if __name__ == "__main__":
-    mcp.run()  # defaults to stdio transport
+    # Defaults: transport="stdio", log_level="info"
+    mcp.run()
