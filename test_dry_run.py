@@ -2,7 +2,7 @@
 from mcp_server.utils import fetch_text, find_email, has_contact, auto_submit_form
 from mcp_server.llm import draft_email, generate_company_impression, classify_manufacturer
 
-url = "https://www.akatsuki-g.co.jp"
+url = "https://miraiparks.jp/"
 company_name = "temp"  # You can use extract_name if you want to auto-detect
 
 
@@ -15,7 +15,7 @@ elif not classify_manufacturer(text):
     print("Not a manufacturer.")
 else:
     impression_text = generate_company_impression(text)
-    mail_body = draft_email(company_name, impression_text)
+    mail_body = draft_email(impression_text)
     contact_url = has_contact(html, url)
 
     # Fetch email from contact page if found
