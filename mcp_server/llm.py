@@ -15,20 +15,6 @@ MAX_RETRIES = 3
 BASE_DELAY = 2
 
 # ────────────────────────────────────────────────────────────────────────────
-# 追加: メール末尾に必ず付けるクロージングブロック
-# ────────────────────────────────────────────────────────────────────────────
-CLOSING_BLOCK = """今回のご連絡は「ご提案」ではなく、現場のリアルなお声をお聞かせいただくためのヒアリングのお願いです。
-Zoomなどのオンラインで、10〜15分程度のお時間を頂戴できましたら幸いです。
-また、ご希望に応じて、超低コスト（場合により無償）での試作ツールのご提供も可能です。
-少しでもご興味をお持ちいただけましたら、以下のカレンダーよりご都合の良い時間をご予約いただくか、候補日時をいくつかご返信いただけますと幸いです。
-▼カレンダー予約リンク
-https://calendar.app.google/jM8gesybkVQEGhww6
-
-株式会社 日本自動化技術
-橋本 武士（はしもと たけし）
-https://japan-automation-technology.vercel.app"""
-
-# ────────────────────────────────────────────────────────────────────────────
 # Gemini 基本処理
 # ────────────────────────────────────────────────────────────────────────────
 def _initialize_gemini():
@@ -155,6 +141,23 @@ def classify_manufacturer(text: str) -> bool:
         logger.error(traceback.format_exc())
         return False
 
+
+# ────────────────────────────────────────────────────────────────────────────
+# 追加: メール末尾に必ず付けるクロージングブロック
+# ────────────────────────────────────────────────────────────────────────────
+CLOSING_BLOCK = """今回のご連絡は「ご提案」ではなく、現場のリアルなお声をお聞かせいただくためのヒアリングのお願いです。
+Zoomなどのオンラインで、10〜15分程度のお時間を頂戴できましたら幸いです。
+また、ご希望に応じて、超低コスト（場合により無償）での試作ツールのご提供も可能です。
+少しでもご興味をお持ちいただけましたら、以下のカレンダーよりご都合の良い時間をご予約いただくか、候補日時をいくつかご返信いただけますと幸いです。
+▼カレンダー予約リンク
+https://calendar.app.google/jM8gesybkVQEGhww6
+
+株式会社 日本自動化技術
+橋本 武士（はしもと たけし）
+https://japan-automation-technology.vercel.app"""
+
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # メール生成
 # ────────────────────────────────────────────────────────────────────────────
@@ -246,6 +249,13 @@ def generate_form_answers(fields: list[dict[str, str]],
         import re
         json_txt = re.search(r"\{.*\}", raw, re.S).group(0)
         answers = json.loads(json_txt)
+        # --- Always set subject fields to the fixed phrase ---
+        subject_phrase = "【株式会社 日本自動化技術より】製造現場の課題に関するヒアリングのお願い"
+        for f in fields:
+            label = f.get("label", "")
+            name = f.get("name", "")
+            if ("件名" in label) or ("subject" in label.lower()) or ("件名" in name) or ("subject" in name.lower()):
+                answers[f["name"]] = subject_phrase
         return answers
     except Exception:
         logger.warning("Failed to parse Gemini JSON, falling back to空回答")

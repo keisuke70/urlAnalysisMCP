@@ -69,20 +69,24 @@ def fetch_text(url: str) -> tuple:
 def find_email(html_content: str) -> str:
     """
     Extract the first email address from HTML content.
-    
     Args:
         html_content: HTML content to search
-        
     Returns:
         str: First email address found or None
     """
     try:
+        # 1. Try to find <a href="mailto:..."> links
+        soup = BeautifulSoup(html_content, 'html.parser')
+        for a in soup.find_all('a', href=True):
+            href = a['href']
+            if href.lower().startswith('mailto:'):
+                email = href[7:].split('?')[0].strip()
+                if email:
+                    return email
+        # 2. Fallback: regex search
         email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
-        
         emails = re.findall(email_pattern, html_content)
-        
         return emails[0] if emails else None
-        
     except Exception as e:
         logger.error(f"Error finding email: {str(e)}")
         return None
@@ -99,13 +103,33 @@ def has_contact(html_content: str, base_url: str) -> str:
     try:
         soup = BeautifulSoup(html_content, 'html.parser')
 
-        # Japanese and English indicators
+        # Expanded Japanese and English indicators
         contact_indicators = [
             'お問い合わせ', 'お問合せ', '問合せ', '連絡', 'inquiry', 'otoiawase',
-            'contact', 'get in touch', 'reach out', 'email us'
+            'contact', 'get in touch', 'reach out', 'email us',
+            '窓口', 'madoguchi', 'ご連絡', 'ご相談', 'フォーム', 'form',
+        ]
+        # Patterns for hrefs
+        contact_href_patterns = [
+            '/contact', '/contact/', 'contact.php', 'otoiawase', 'inquiry', 'madoguchi',
         ]
 
-        # 1. Check forms
+        # 1. Check links for exact/strong matches (prioritize)
+        links = soup.find_all('a', href=True)
+        for link in links:
+            href = link['href'].lower()
+            text = link.get_text().strip().lower()
+            # Exact match on href
+            if any(href == pat or href.endswith(pat) for pat in contact_href_patterns):
+                return urljoin(base_url, link['href'])
+            # Exact match on text
+            if any(ind in text for ind in contact_indicators):
+                return urljoin(base_url, link['href'])
+            # Partial match on href
+            if any(ind in href for ind in contact_indicators):
+                return urljoin(base_url, link['href'])
+
+        # 2. Check forms for contact-related indicators (but do NOT return base_url unless confident)
         forms = soup.find_all('form')
         for form in forms:
             form_text = form.get_text().lower()
@@ -120,17 +144,8 @@ def has_contact(html_content: str, base_url: str) -> str:
                     indicator in form_class):
                     if form.get('action'):
                         return urljoin(base_url, form.get('action'))
-                    return base_url
-
-        # 2. Check links
-        links = soup.find_all('a')
-        for link in links:
-            href = link.get('href', '')
-            link_text = link.get_text().lower()
-            for indicator in contact_indicators:
-                if indicator in link_text or indicator in href.lower():
-                    if href:
-                        return urljoin(base_url, href)
+                    # Only return base_url if the form covers the whole page and no links found
+                    # (rare, so skip returning base_url here)
 
         # 3. Check for elements with contact-related class names
         contact_elements = soup.find_all(
@@ -139,19 +154,19 @@ def has_contact(html_content: str, base_url: str) -> str:
         )
         if contact_elements:
             for element in contact_elements:
-                links = element.find_all('a')
+                links = element.find_all('a', href=True)
                 if links:
-                    href = links[0].get('href', '')
+                    href = links[0]['href']
                     if href:
                         return urljoin(base_url, href)
-            return base_url
 
-        # 4. Fallback: look for URLs ending with inquiry.html or similar
+        # 4. Fallback: look for URLs ending with inquiry.html, madoguchi.html, etc.
         for link in links:
-            href = link.get('href', '')
-            if href and (href.lower().endswith('inquiry.html') or href.lower().endswith('otoiawase.html')):
-                return urljoin(base_url, href)
+            href = link['href'].lower()
+            if href.endswith('inquiry.html') or href.endswith('otoiawase.html') or href.endswith('madoguchi.html'):
+                return urljoin(base_url, link['href'])
 
+        # 5. Do NOT return base_url as fallback
         return None
     except Exception as e:
         logger.error(f"Error checking for contact: {str(e)}")

@@ -69,8 +69,18 @@ def process_company(company_name: str, url: str) -> Dict[str, Optional[str]]:
         # Manufacturer path
         impression_text = generate_company_impression(text_content)
         email_body = draft_email(company_name, impression_text)
-        email_address = find_email(html_content)
         contact_page_url = has_contact(html_content, url)
+
+        # --- NEW: Try to extract email from contact page if found ---
+        email_address = None
+        if contact_page_url:
+            contact_html, _ = fetch_text(contact_page_url)
+            email_address = find_email(contact_html)
+            if not email_address:
+                # fallback to homepage
+                email_address = find_email(html_content)
+        else:
+            email_address = find_email(html_content)
 
         submitted_flag = False
         if contact_page_url:
