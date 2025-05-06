@@ -9,63 +9,78 @@ import ssl  # Add ssl module import
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# ----------------------------------------------------------------------
+# 追加: タイムアウト・リトライ設定（他の関数はそのまま）
+# ----------------------------------------------------------------------
+_DEFAULT_TIMEOUT = 10   # 1 回目の read timeout 秒
+_MAX_RETRIES = 2        # 追加で試行する回数
+_BACKOFF_FACTOR = 1.8   # タイムアウトを何倍に伸ばすか
+
+
 def fetch_text(url: str) -> tuple:
     """
-    Fetch HTML content from a URL and extract text.
-    
-    Args:
-        url: The URL to fetch
-        
-    Returns:
-        tuple: (html_content, text_content)
+    Fetch HTML content from a URL and extract text, with retry on ReadTimeout.
+    Returns (html_content, text_content) or ("", "") on failure.
     """
-    try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        
+    headers = {
+        'User-Agent': (
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+            'AppleWebKit/537.36 (KHTML, like Gecko) '
+            'Chrome/91.0.4472.124 Safari/537.36'
+        )
+    }
+
+    timeout = _DEFAULT_TIMEOUT
+    for attempt in range(_MAX_RETRIES + 1):
         try:
-            # First attempt with default settings
-            response = requests.get(url, headers=headers, timeout=10)
+            # --- 通常のリクエスト -------------------------------------------------
+            response = requests.get(url, headers=headers, timeout=timeout)
             response.raise_for_status()
+
         except requests.exceptions.SSLError as ssl_err:
-            # Check if it's specifically a DH_KEY_TOO_SMALL error
+            # ---- DH_KEY_TOO_SMALL の場合だけ弱い暗号で再試行 -------------------
             if 'DH_KEY_TOO_SMALL' in str(ssl_err):
-                # Create a custom session with less strict SSL settings
                 session = requests.Session()
-                # Create a custom context that accepts legacy DH key parameters
-                context = ssl.create_default_context()
-                context.set_ciphers('DEFAULT@SECLEVEL=1')  # Lower security level to accept weaker DH keys
+                ctx = ssl.create_default_context()
+                ctx.set_ciphers('DEFAULT@SECLEVEL=1')
                 session.mount('https://', requests.adapters.HTTPAdapter(max_retries=3))
-                
-                # Override the session's SSL configuration
                 session.verify = True
-                session.adapters['https://'].poolmanager.connection_pool_kw['ssl_context'] = context
-                
-                # Retry with the custom session
-                response = session.get(url, headers=headers, timeout=10)
+                session.adapters['https://'].poolmanager.connection_pool_kw['ssl_context'] = ctx
+                response = session.get(url, headers=headers, timeout=timeout)
                 response.raise_for_status()
             else:
-                # Re-raise if it's a different SSL error
                 raise
-        
+
+        except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError) as net_err:
+            # ---- タイムアウト・ネットワーク系: リトライ -------------------------
+            if attempt < _MAX_RETRIES:
+                logger.warning(
+                    "Timeout fetching %s (attempt %s/%s, timeout=%ss). Retrying...",
+                    url, attempt + 1, _MAX_RETRIES, timeout,
+                )
+                timeout = int(timeout * _BACKOFF_FACTOR)
+                time.sleep(1.2 * (attempt + 1))  # 軽い back‑off
+                continue
+            logger.error(f"Error fetching {url}: {net_err}")
+            logger.error(traceback.format_exc())
+            return "", ""
+
+        except Exception as e:
+            # ---- その他のエラー: そのままログして終了 ---------------------------
+            logger.error(f"Error fetching {url}: {e}")
+            logger.error(traceback.format_exc())
+            return "", ""
+
+        # ---------------------- ここに来れば成功 -------------------------------
         html_content = response.text
         soup = BeautifulSoup(html_content, 'html.parser')
-        
         for script_or_style in soup(['script', 'style', 'meta', 'noscript']):
             script_or_style.decompose()
-            
-        text_content = soup.get_text(separator=' ', strip=True)
-        
-        text_content = re.sub(r'\s+', ' ', text_content).strip()
-        
+        text_content = re.sub(r'\s+', ' ', soup.get_text(separator=' ', strip=True)).strip()
         return html_content, text_content
-        
-    except Exception as e:
-        logger.error(f"Error fetching {url}: {str(e)}")
-        logger.error(traceback.format_exc())
-        return "", ""
 
+    # ここには来ないはずだが念のため
+    return "", ""
 def find_email(html_content: str) -> str:
     """
     Extract the first email address from HTML content.

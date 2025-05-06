@@ -1,81 +1,130 @@
-import os
+import argparse
 import csv
 import logging
+from typing import Dict, List, Optional
+
 from dotenv import load_dotenv
-from typing import List, Dict, Optional
+
 from mcp_server.utils import fetch_text, find_email, has_contact
-from mcp_server.llm import classify_manufacturer, draft_email, generate_company_impression
+from mcp_server.llm import (
+    classify_manufacturer,
+    draft_email,
+    generate_company_impression,
+    generate_pain_points,
+)
 
 load_dotenv()
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+)
 logger = logging.getLogger(__name__)
 
 
+# ────────────────────────────────────────────────────────────────────────────
+# CSV 入出力
+# ────────────────────────────────────────────────────────────────────────────
 def read_input_csv(filepath: str) -> List[Dict[str, str]]:
-    companies = []
-    with open(filepath, "r", encoding="utf-8-sig") as f:
+    companies: List[Dict[str, str]] = []
+    with open(filepath, encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
-        if "website" not in reader.fieldnames:
-            raise ValueError("Input CSV must contain 'website' column.")
+        if not reader.fieldnames or {"company", "website"} - set(reader.fieldnames):
+            raise ValueError("CSV must have 'company' and 'website' columns.")
         for row in reader:
-            companies.append({"website": row["website"]})
+            companies.append({"company": row["company"], "website": row["website"]})
     return companies
 
 
-def write_output_csv(filepath: str, data: List[Dict[str, Optional[str]]]):
-    fieldnames = ["website", "contact_url", "mail_content", "email_address"]
+def write_output_csv(filepath: str, data: List[Dict[str, Optional[str]]]) -> None:
+    fieldnames = [
+        "company_name",
+        "website",
+        "manufacturer",
+        "email_address",
+        "contact_url",
+        "mail_content",
+    ]
     with open(filepath, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(data)
 
 
-def process_website(url: str) -> Dict[str, Optional[str]]:
-    logger.info(f"Processing: {url}")
-    result = {"website": url, "contact_url": None, "mail_content": None, "email_address": None}
+# ────────────────────────────────────────────────────────────────────────────
+# 個別サイト処理
+# ────────────────────────────────────────────────────────────────────────────
+def process_website(url: str, company_name: str) -> Dict[str, Optional[str]]:
+    logger.info("Processing: %s (%s)", company_name, url)
+    result: Dict[str, Optional[str]] = {
+        "company_name": company_name,
+        "website": url,
+        "manufacturer": False,
+        "email_address": None,
+        "contact_url": None,
+        "mail_content": None,
+    }
+
     try:
-        html_content, text_content = fetch_text(url)
-        if not text_content:
+        html, text = fetch_text(url)
+        if not text:
             return result
-        if not classify_manufacturer(text_content):
+
+        is_manuf = classify_manufacturer(text)
+        result["manufacturer"] = is_manuf  # ★ 判定結果を保存
+
+        if not is_manuf:
+            # メーカーでなければ空欄のまま返却
             return result
-        impression_text = generate_company_impression(text_content)
-        mail_content = draft_email(impression_text)
-        contact_url = has_contact(html_content, url)
-        email_address = None
+
+        # ① 感銘文
+        impression = generate_company_impression(text)
+
+        # ② 会社固有のお困りごと bullet
+        pain_points = generate_pain_points(text)
+
+        # ③ メール本文生成
+        mail_content = draft_email(company_name, impression, pain_points)
+
+        # ④ 連絡先 URL / メール抽出
+        contact_url = has_contact(html, url)
+        email = None
         if contact_url:
             contact_html, _ = fetch_text(contact_url)
-            email_address = find_email(contact_html)
-            if not email_address:
-                email_address = find_email(html_content)
+            email = find_email(contact_html) or find_email(html)
         else:
-            email_address = find_email(html_content)
-        result.update({
-            "contact_url": contact_url,
-            "mail_content": mail_content,
-            "email_address": email_address
-        })
+            email = find_email(html)
+
+        result.update(
+            {
+                "email_address": email,
+                "contact_url": contact_url,
+                "mail_content": mail_content,
+            }
+        )
         return result
-    except Exception as exc:
-        logger.error(f"Error processing {url}: {exc}")
+
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Error processing %s (%s): %s", company_name, url, exc)
         return result
 
 
-def main():
-    import argparse
-    ap = argparse.ArgumentParser(description="Simple company analyzer (no form logic)")
-    ap.add_argument("-i", "--input", required=True, help="input CSV path (must have 'website' column)")
-    ap.add_argument("-o", "--output", default="output_simple.csv", help="output CSV path")
+# ────────────────────────────────────────────────────────────────────────────
+# メイン
+# ────────────────────────────────────────────────────────────────────────────
+def main() -> None:
+    ap = argparse.ArgumentParser("Simple company analyzer (auto‑email)")
+    ap.add_argument("-i", "--input", required=True, help="CSV with 'company','website'")
+    ap.add_argument("-o", "--output", default="output_simple.csv", help="output CSV")
     args = ap.parse_args()
 
-    companies = read_input_csv(args.input)
-    results = []
+    companies = read_input_csv(args.input)[0:12]
+    results: List[Dict[str, Optional[str]]] = []
+
     for c in companies:
-        res = process_website(c["website"])
-        # Only output for manufacturer
-        if res["mail_content"]:
-            results.append(res)
+        res = process_website(c["website"], c["company"])
+        results.append(res)           # ★ すべて出力（メーカー以外も含む）
+
     write_output_csv(args.output, results)
     logger.info("Processing finished.")
 
