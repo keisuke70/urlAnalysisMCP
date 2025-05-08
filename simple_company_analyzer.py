@@ -54,8 +54,8 @@ def write_output_csv(filepath: str, data: List[Dict[str, Optional[str]]]) -> Non
 # ────────────────────────────────────────────────────────────────────────────
 # 個別サイト処理
 # ────────────────────────────────────────────────────────────────────────────
-def process_website(url: str, company_name: str) -> Dict[str, Optional[str]]:
-    logger.info("Processing: %s (%s)", company_name, url)
+def process_website(url: str, company_name: str, row_num: int) -> Dict[str, Optional[str]]:
+    logger.info("Processing row %d: %s (%s)", row_num, company_name, url)
     result: Dict[str, Optional[str]] = {
         "company_name": company_name,
         "website": url,
@@ -64,6 +64,10 @@ def process_website(url: str, company_name: str) -> Dict[str, Optional[str]]:
         "contact_url": None,
         "mail_content": None,
     }
+
+    if not url or not url.strip():
+        logger.warning(f"Row {row_num}: No URL provided for company '{company_name}'. Skipping.")
+        return result
 
     try:
         html, text = fetch_text(url)
@@ -118,12 +122,12 @@ def main() -> None:
     ap.add_argument("-o", "--output", default="output_simple.csv", help="output CSV")
     args = ap.parse_args()
 
-    companies = read_input_csv(args.input)[0:12]
+    companies = read_input_csv(args.input)[0:150]
     results: List[Dict[str, Optional[str]]] = []
 
-    for c in companies:
-        res = process_website(c["website"], c["company"])
-        results.append(res)           # ★ すべて出力（メーカー以外も含む）
+    for idx, c in enumerate(companies, start=1):
+        res = process_website(c["website"], c["company"], idx)
+        results.append(res)
 
     write_output_csv(args.output, results)
     logger.info("Processing finished.")

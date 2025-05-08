@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 # ----------------------------------------------------------------------
 # 追加: タイムアウト・リトライ設定（他の関数はそのまま）
 # ----------------------------------------------------------------------
-_DEFAULT_TIMEOUT = 10   # 1 回目の read timeout 秒
+_DEFAULT_TIMEOUT = 4   # 1 回目の read timeout 秒 (was 10)
 _MAX_RETRIES = 2        # 追加で試行する回数
 _BACKOFF_FACTOR = 1.8   # タイムアウトを何倍に伸ばすか
 
@@ -51,7 +51,7 @@ def fetch_text(url: str) -> tuple:
             else:
                 raise
 
-        except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError) as net_err:
+        except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError, requests.exceptions.ChunkedEncodingError) as net_err:
             # ---- タイムアウト・ネットワーク系: リトライ -------------------------
             if attempt < _MAX_RETRIES:
                 logger.warning(
@@ -59,14 +59,20 @@ def fetch_text(url: str) -> tuple:
                     url, attempt + 1, _MAX_RETRIES, timeout,
                 )
                 timeout = int(timeout * _BACKOFF_FACTOR)
+                import time
                 time.sleep(1.2 * (attempt + 1))  # 軽い back‑off
                 continue
             logger.error(f"Error fetching {url}: {net_err}")
-            logger.error(traceback.format_exc())
+            # 簡潔なエラーメッセージのみ出力（トレースバックは省略）
+            return "", ""
+
+        except requests.exceptions.RequestException as req_err:
+            # その他の requests 例外も簡潔に
+            logger.error(f"Error fetching {url}: {req_err}")
             return "", ""
 
         except Exception as e:
-            # ---- その他のエラー: そのままログして終了 ---------------------------
+            # ---- その他のエラー: そのままログして終了（トレースバックあり） ---------------------------
             logger.error(f"Error fetching {url}: {e}")
             logger.error(traceback.format_exc())
             return "", ""
@@ -81,6 +87,7 @@ def fetch_text(url: str) -> tuple:
 
     # ここには来ないはずだが念のため
     return "", ""
+
 def find_email(html_content: str) -> str:
     """
     Extract the first email address from HTML content.
